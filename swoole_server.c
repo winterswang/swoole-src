@@ -1386,6 +1386,12 @@ PHP_METHOD(swoole_server, set)
         convert_to_boolean(v);
         serv->daemonize = Z_BVAL_P(v);
     }
+    //reload_async
+    if (sw_zend_hash_find(vht, ZEND_STRS("reload_async"), (void **) &v) == SUCCESS)
+    {
+        convert_to_boolean(v);
+        serv->reload_async = Z_BVAL_P(v);
+    }    
     //reactor thread num
     if (sw_zend_hash_find(vht, ZEND_STRS("reactor_num"), (void **) &v) == SUCCESS)
     {
