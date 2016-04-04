@@ -213,6 +213,7 @@ static int swManager_loop_async(swFactory *factory)
 {
     int pid, new_pid;
     int i;
+    int reload_worker_i;
     int reload_worker_num;
     int ret;
     int status;
@@ -278,7 +279,7 @@ static int swManager_loop_async(swFactory *factory)
                             sizeof(swWorker) * SwooleG.task_worker_num);
                     reload_worker_num += SwooleG.task_worker_num;
                 }
-                ManagerProcess.reload_event_worker = 0;
+                
                 goto kill_workers;
             }
             else if (ManagerProcess.reload_task_worker == 1)
@@ -292,12 +293,12 @@ static int swManager_loop_async(swFactory *factory)
                 memcpy(reload_workers, SwooleGS->task_workers.workers, sizeof(swWorker) * SwooleG.task_worker_num);
                 reload_worker_num = SwooleG.task_worker_num;
 
-                ManagerProcess.reload_task_worker = 0;
                 goto kill_workers;
             }            
         }
         if (SwooleG.running == 1)
         {
+            swWarn(" manager wait worker pid is %d", pid);
             /* 回收worker */
             for (i = 0; i < serv->worker_num; i++)
             {
@@ -314,12 +315,14 @@ static int swManager_loop_async(swFactory *factory)
                     new_pid = (pid_t) swHashMap_find_int(pidMap, pid);
                     swWarn(" now the worker pid is %d", new_pid);
                     serv->workers[i].pid = new_pid;
+                    pid = 0;
+                    break;
                 }
             }
 
             if (pid > 0)
             {
-                swWarn(" pid %d is not in the workers need to exit", pid);
+                swWarn(" the task worker pid is %d and need to create a new one", pid);
                 swWorker *exit_worker;
                 //task worker
                 if (SwooleGS->task_workers.map)
@@ -348,33 +351,55 @@ static int swManager_loop_async(swFactory *factory)
 
         kill_workers: if (ManagerProcess.reloading == 1)
         {
-            for (i = 0; i < serv->worker_num; i++)
-            {
-                /* 先fork新的 再kill老的*/
-                while (1)
+            //分全量重启和只重启task进程
+            if (ManagerProcess.reload_event_worker == 1)
+            {           
+                //重启worker进程组
+                for (i = 0; i < serv->worker_num; i++)
                 {
-                    new_pid = swManager_spawn_worker(factory, i);
-                    if (new_pid < 0)
+                    /* 先fork新的 再kill老的*/
+                    while (1)
                     {
-                        usleep(100000);
-                        continue;
+                        new_pid = swManager_spawn_worker(factory, i);
+                        if (new_pid < 0)
+                        {
+                            usleep(100000);
+                            continue;
+                        }
+                        else
+                        {
+                            swHashMap_add_int(pidMap, reload_workers[i].pid, (void*) new_pid);
+                            swWarn(" add pidMap new_pid is %d old pid is %d", new_pid, reload_workers[i].pid);
+                            break;
+                        }
                     }
-                    else
+
+                    swWarn(" kill the reload workers %d", reload_workers[i].pid);
+                    ret = kill(reload_workers[i].pid, SIGUSR1);
+                    if (ret < 0)
                     {
-                        swHashMap_add_int(pidMap, reload_workers[i].pid, (void*) new_pid);
-                        swWarn(" add pidMap new_pid is %d old pid is %d", new_pid, reload_workers[i].pid);
-                        break;
-                    }
+                        swSysError("kill(%d, SIGTERM) failed.", reload_workers[i].pid);
+                    }  
                 }
 
-                swWarn(" kill the reload workers %d", reload_workers[i].pid);
-                ret = kill(reload_workers[i].pid, SIGUSR1);
-                if (ret < 0)
-                {
-                    swSysError("kill(%d, SIGTERM) failed.", reload_workers[i].pid);
-                }  
+                reload_worker_i = serv->worker_num;
+                ManagerProcess.reload_event_worker = 0;
             }
-            ManagerProcess.reloading = 0;
+
+            if (reload_worker_i >= reload_worker_num)
+            {
+                ManagerProcess.reloading = 0;
+                reload_worker_i = 0;
+                continue;
+            }
+
+            swWarn(" kill the reload task workers %d", reload_workers[reload_worker_i].pid);
+            ret = kill(reload_workers[reload_worker_i].pid, SIGTERM);
+            if (ret < 0)
+            {
+                swSysError("kill(%d, SIGTERM) failed.", reload_workers[reload_worker_i].pid);
+            }
+            reload_worker_i++;
         }
     } 
 
@@ -554,6 +579,7 @@ static int swManager_loop_sync(swFactory *factory)
 
             if (pid > 0)
             {
+                swWarn(" the task worker pid is %d and need to create a new one", pid);
                 swWorker *exit_worker;
                 //task worker
                 if (SwooleGS->task_workers.map)
@@ -589,6 +615,8 @@ static int swManager_loop_sync(swFactory *factory)
                 reload_worker_i = 0;
                 continue;
             }
+
+            swWarn(" kill the reload workers %d", reload_workers[reload_worker_i].pid);
             ret = kill(reload_workers[reload_worker_i].pid, SIGTERM);
             if (ret < 0)
             {
