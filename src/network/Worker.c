@@ -51,7 +51,7 @@ void swWorker_signal_init(void)
     swSignal_add(SIGHUP, NULL);
     swSignal_add(SIGPIPE, NULL);
     swSignal_add(SIGUSR1, swWorker_signal_handler);
-    swSignal_add(SIGUSR2, NULL);
+    swSignal_add(SIGUSR2, swWorker_signal_handler);
     //swSignal_add(SIGINT, swWorker_signal_handler);
     swSignal_add(SIGTERM, swWorker_signal_handler);
     swSignal_add(SIGALRM, swSystemTimer_signal_handler);
@@ -86,10 +86,11 @@ void swWorker_signal_handler(int signo)
         if (SwooleG.main_reactor)
         {
             swWorker *worker = SwooleWG.worker;
-            swWarn(" the worker %d get the signo", worker->pid);
             SwooleWG.reload = 1;
             SwooleWG.reload_count = 0;
 
+            //强行加上超时时间
+            SwooleG.main_reactor->timeout_msec = 10;
             //删掉read管道
             swConnection *socket = swReactor_get(SwooleG.main_reactor, worker->pipe_worker);
             if (socket->events & SW_EVENT_WRITE)
@@ -114,6 +115,15 @@ void swWorker_signal_handler(int signo)
         }
         break;    
     case SIGUSR2:
+        //task
+        if (SwooleG.main_reactor)
+        {
+            SwooleG.main_reactor->running = 0;
+        }
+        else
+        {
+            SwooleG.running = 0;
+        }
         break;
     default:
         break;
